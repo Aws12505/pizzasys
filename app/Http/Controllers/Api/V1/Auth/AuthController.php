@@ -1,14 +1,15 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Api\V1\Auth;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\RegisterRequest;
-use App\Http\Requests\LoginRequest;
-use App\Http\Requests\VerifyOtpRequest;
-use App\Http\Requests\ForgotPasswordRequest;
-use App\Http\Requests\ResetPasswordRequest;
-use App\Services\AuthService;
+use App\Http\Requests\Api\V1\Auth\RegisterRequest;
+use App\Http\Requests\Api\V1\Auth\LoginRequest;
+use App\Http\Requests\Api\V1\Auth\VerifyOtpRequest;
+use App\Http\Requests\Api\V1\Auth\ForgotPasswordRequest;
+use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
+use App\Http\Requests\Api\V1\Auth\UpdateMeRequest;
+use App\Services\V1\Auth\AuthService;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,33 +20,36 @@ class AuthController extends Controller
         private AuthService $authService
     ) {}
 
-    public function register(RegisterRequest $request): JsonResponse
-    {
-        try {
-            $result = $this->authService->register($request->validated());
-            
-            return response()->json([
-                'success' => true,
-                'message' => $result['message'],
-                'data' => [
-                    'user' => $result['user']
-                ]
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Registration failed',
-                'error' => $e->getMessage()
-            ], 400);
-        }
-    }
+    // public function register(RegisterRequest $request): JsonResponse
+    // {
+    //     try {
+    //         $result = $this->authService->register($request->validated());
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'message' => $result['message'],
+    //             'data' => [
+    //                 'user' => $result['user']
+    //             ]
+    //         ], 201);
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Registration failed',
+    //             'error' => $e->getMessage()
+    //         ], 400);
+    //     }
+    // }
 
     public function login(LoginRequest $request): JsonResponse
     {
         try {
             $result = $this->authService->login(
                 $request->email,
-                $request->password
+                $request->password,
+                $request->input('device'),
+                $request->input('fcm_token'),
+                $request->input('client_type', 'web'),
             );
 
             return response()->json([
@@ -89,7 +93,7 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('email', $request->email)->first();
-        
+
         if ($user->email_verified_at) {
             return response()->json([
                 'success' => false,
@@ -99,7 +103,7 @@ class AuthController extends Controller
 
         try {
             $this->authService->sendOtp($request->email, 'verification');
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Verification OTP sent successfully'
@@ -116,7 +120,7 @@ class AuthController extends Controller
     {
         try {
             $this->authService->sendOtp($request->email, 'password_reset');
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Password reset OTP sent to your email'
@@ -154,7 +158,7 @@ class AuthController extends Controller
     {
         try {
             $result = $this->authService->refreshToken($request->user());
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Token refreshed successfully',
@@ -180,11 +184,66 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $userData = $this->authService->getUserCompleteData($user);
+
         return response()->json([
             'success' => true,
             'data' => [
-                'user' => $request->user()
+                'user' => $userData
             ]
+        ]);
+    }
+
+    public function updateMe(UpdateMeRequest $request): JsonResponse
+    {
+        $userData = $this->authService->updateMe(
+            $request->user(),
+            $request->validated(),
+            $request->file('image'),
+            $request
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'user' => $userData
+            ]
+        ]);
+    }
+
+    public function verifyResetOtp(Request $request)
+    {
+        $data = $request->validate([
+            'email' => 'required|email',
+            'otp'   => 'required|string',
+        ]);
+
+        $isValid = $this->authService->checkOtp(
+            $data['email'],
+            $data['otp'],
+            'password_reset'
+        );
+
+        if (! $isValid) {
+            return response()->json([
+                'message' => 'Invalid or expired OTP.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP is valid. You can now reset your password.',
+        ]);
+    }
+
+    public function authorizationOverview(Request $request): JsonResponse
+    {
+        $data = $this->authService->getAuthorizationOverview($request->user());
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
         ]);
     }
 }
